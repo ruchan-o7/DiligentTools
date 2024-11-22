@@ -68,17 +68,22 @@ namespace Diligent
 class TIFFClientOpenWrapper
 {
 public:
-    explicit TIFFClientOpenWrapper(IDataBlob* pData) noexcept :
+    TIFFClientOpenWrapper(const void* pData, size_t Size) noexcept :
         m_Offset{0},
-        m_Size{pData->GetSize()},
+        m_Size{Size},
         m_pData{pData}
     {
     }
 
+    explicit TIFFClientOpenWrapper(IDataBlob* pDstBlob) noexcept :
+        m_pDstBlob{pDstBlob}
+    {}
+
     static tmsize_t TIFFReadProc(thandle_t pClientData, void* pBuffer, tmsize_t Size)
     {
-        auto* pThis   = static_cast<TIFFClientOpenWrapper*>(pClientData);
-        auto* pSrcPtr = static_cast<const Uint8*>(pThis->m_pData->GetConstDataPtr()) + pThis->m_Offset;
+        TIFFClientOpenWrapper* pThis = static_cast<TIFFClientOpenWrapper*>(pClientData);
+        VERIFY(pThis->m_pData != nullptr, "TIFF file was not opened for reading");
+        const void* pSrcPtr = static_cast<const Uint8*>(pThis->m_pData) + pThis->m_Offset;
         memcpy(pBuffer, pSrcPtr, Size);
         pThis->m_Offset += Size;
         return Size;
@@ -86,13 +91,14 @@ public:
 
     static tmsize_t TIFFWriteProc(thandle_t pClientData, void* pBuffer, tmsize_t Size)
     {
-        auto* pThis = static_cast<TIFFClientOpenWrapper*>(pClientData);
+        TIFFClientOpenWrapper* pThis = static_cast<TIFFClientOpenWrapper*>(pClientData);
+        VERIFY(pThis->m_pDstBlob != nullptr, "TIFF file was not opened for writing");
         if (pThis->m_Offset + Size > pThis->m_Size)
         {
             pThis->m_Size = pThis->m_Offset + Size;
-            pThis->m_pData->Resize(pThis->m_Size);
+            pThis->m_pDstBlob->Resize(pThis->m_Size);
         }
-        auto* pDstPtr = static_cast<Uint8*>(pThis->m_pData->GetDataPtr()) + pThis->m_Offset;
+        void* pDstPtr = pThis->m_pDstBlob->GetDataPtr(pThis->m_Offset);
         memcpy(pDstPtr, pBuffer, Size);
         pThis->m_Offset += Size;
         return Size;
@@ -114,10 +120,11 @@ public:
 
     static int TIFFCloseProc(thandle_t pClientData)
     {
-        auto* pThis = reinterpret_cast<TIFFClientOpenWrapper*>(pClientData);
-        pThis->m_pData.Release();
-        pThis->m_Size   = 0;
-        pThis->m_Offset = 0;
+        auto* pThis       = reinterpret_cast<TIFFClientOpenWrapper*>(pClientData);
+        pThis->m_pData    = nullptr;
+        pThis->m_pDstBlob = nullptr;
+        pThis->m_Size     = 0;
+        pThis->m_Offset   = 0;
         return 0;
     }
 
@@ -139,14 +146,15 @@ public:
     }
 
 private:
-    size_t                   m_Offset;
-    size_t                   m_Size;
-    RefCntAutoPtr<IDataBlob> m_pData;
+    size_t      m_Offset   = 0;
+    size_t      m_Size     = 0;
+    const void* m_pData    = nullptr;
+    IDataBlob*  m_pDstBlob = nullptr;
 };
 
-void Image::LoadTiffFile(IDataBlob* pFileData, const ImageLoadInfo& LoadInfo)
+void Image::LoadTiffFile(const void* pData, size_t Size, IDataBlob* pDstPixels, ImageDesc& Desc)
 {
-    TIFFClientOpenWrapper TiffClientOpenWrpr(pFileData);
+    TIFFClientOpenWrapper TiffClientOpenWrpr{pData, Size};
 
     auto TiffFile = TIFFClientOpen("", "rm", &TiffClientOpenWrpr,
                                    TIFFClientOpenWrapper::TIFFReadProc,
@@ -157,15 +165,15 @@ void Image::LoadTiffFile(IDataBlob* pFileData, const ImageLoadInfo& LoadInfo)
                                    TIFFClientOpenWrapper::TIFFMapFileProc,
                                    TIFFClientOpenWrapper::TIFFUnmapFileProc);
 
-    TIFFGetField(TiffFile, TIFFTAG_IMAGEWIDTH, &m_Desc.Width);
-    TIFFGetField(TiffFile, TIFFTAG_IMAGELENGTH, &m_Desc.Height);
+    TIFFGetField(TiffFile, TIFFTAG_IMAGEWIDTH, &Desc.Width);
+    TIFFGetField(TiffFile, TIFFTAG_IMAGELENGTH, &Desc.Height);
 
     Uint16 SamplesPerPixel = 0;
     // SamplesPerPixel is usually 1 for bilevel, grayscale, and palette-color images.
     // SamplesPerPixel is usually 3 for RGB images. If this value is higher, ExtraSamples
     // should give an indication of the meaning of the additional channels.
     TIFFGetField(TiffFile, TIFFTAG_SAMPLESPERPIXEL, &SamplesPerPixel);
-    m_Desc.NumComponents = SamplesPerPixel;
+    Desc.NumComponents = SamplesPerPixel;
 
     Uint16 BitsPerSample = 0;
     TIFFGetField(TiffFile, TIFFTAG_BITSPERSAMPLE, &BitsPerSample);
@@ -180,9 +188,9 @@ void Image::LoadTiffFile(IDataBlob* pFileData, const ImageLoadInfo& LoadInfo)
         case SAMPLEFORMAT_UINT:
             switch (BitsPerSample)
             {
-                case 8: m_Desc.ComponentType = VT_UINT8; break;
-                case 16: m_Desc.ComponentType = VT_UINT16; break;
-                case 32: m_Desc.ComponentType = VT_UINT32; break;
+                case 8: Desc.ComponentType = VT_UINT8; break;
+                case 16: Desc.ComponentType = VT_UINT16; break;
+                case 32: Desc.ComponentType = VT_UINT32; break;
                 default: LOG_ERROR_AND_THROW(BitsPerSample, " is not a valid UINT component bit depth. Only 8, 16 and 32 are allowed");
             }
             break;
@@ -190,9 +198,9 @@ void Image::LoadTiffFile(IDataBlob* pFileData, const ImageLoadInfo& LoadInfo)
         case SAMPLEFORMAT_INT:
             switch (BitsPerSample)
             {
-                case 8: m_Desc.ComponentType = VT_INT8; break;
-                case 16: m_Desc.ComponentType = VT_INT16; break;
-                case 32: m_Desc.ComponentType = VT_INT32; break;
+                case 8: Desc.ComponentType = VT_INT8; break;
+                case 16: Desc.ComponentType = VT_INT16; break;
+                case 32: Desc.ComponentType = VT_INT32; break;
                 default: LOG_ERROR_AND_THROW(BitsPerSample, " is not a valid INT component bit depth. Only 8, 16 and 32 are allowed");
             }
             break;
@@ -200,8 +208,8 @@ void Image::LoadTiffFile(IDataBlob* pFileData, const ImageLoadInfo& LoadInfo)
         case SAMPLEFORMAT_IEEEFP:
             switch (BitsPerSample)
             {
-                case 16: m_Desc.ComponentType = VT_FLOAT16; break;
-                case 32: m_Desc.ComponentType = VT_FLOAT32; break;
+                case 16: Desc.ComponentType = VT_FLOAT16; break;
+                case 32: Desc.ComponentType = VT_FLOAT32; break;
                 default: LOG_ERROR_AND_THROW(BitsPerSample, " is not a valid FLOAT component bit depth. Only 16 and 32 are allowed");
             }
             break;
@@ -222,162 +230,226 @@ void Image::LoadTiffFile(IDataBlob* pFileData, const ImageLoadInfo& LoadInfo)
             LOG_ERROR_AND_THROW("Unknown sample format: ", Uint32{SampleFormat});
     }
 
-    size_t ScanlineSize = TIFFScanlineSize(TiffFile);
-    m_Desc.RowStride    = AlignUp(m_Desc.Width * m_Desc.NumComponents * (BitsPerSample / 8), 4u);
-    m_pData->Resize(size_t{m_Desc.Height} * size_t{m_Desc.RowStride});
+    if (pDstPixels != nullptr)
+    {
+        size_t ScanlineSize = TIFFScanlineSize(TiffFile);
+        Desc.RowStride      = AlignUp(Desc.Width * Desc.NumComponents * (BitsPerSample / 8), 4u);
+        pDstPixels->Resize(size_t{Desc.Height} * size_t{Desc.RowStride});
 
-    Uint16 PlanarConfig = 0;
-    TIFFGetField(TiffFile, TIFFTAG_PLANARCONFIG, &PlanarConfig);
-    if (PlanarConfig == PLANARCONFIG_CONTIG || m_Desc.NumComponents == 1)
-    {
-        VERIFY_EXPR(m_Desc.RowStride >= ScanlineSize);
-        auto* pDataPtr = reinterpret_cast<Uint8*>(m_pData->GetDataPtr());
-        for (Uint32 row = 0; row < m_Desc.Height; row++, pDataPtr += m_Desc.RowStride)
+        Uint16 PlanarConfig = 0;
+        TIFFGetField(TiffFile, TIFFTAG_PLANARCONFIG, &PlanarConfig);
+        if (PlanarConfig == PLANARCONFIG_CONTIG || Desc.NumComponents == 1)
         {
-            TIFFReadScanline(TiffFile, pDataPtr, row);
-        }
-    }
-    else if (PlanarConfig == PLANARCONFIG_SEPARATE)
-    {
-        std::vector<Uint8> ScanlineData(ScanlineSize);
-        for (Uint32 row = 0; row < m_Desc.Height; ++row)
-        {
-            for (Uint16 comp = 0; comp < m_Desc.NumComponents; ++comp)
+            VERIFY_EXPR(Desc.RowStride >= ScanlineSize);
+            Uint8* pDataPtr = pDstPixels->GetDataPtr<Uint8>();
+            for (Uint32 row = 0; row < Desc.Height; row++, pDataPtr += Desc.RowStride)
             {
-                auto* const pDstRow = reinterpret_cast<Uint8*>(m_pData->GetDataPtr()) + m_Desc.RowStride * row + comp;
-
-                TIFFReadScanline(TiffFile, ScanlineData.data(), row, comp);
-
-                auto CopyComponet = [Width = m_Desc.Width, NumComp = m_Desc.NumComponents](const auto* pSrc, auto* pDst) {
-                    for (Uint32 x = 0; x < Width; ++x)
-                    {
-                        pDst[x * NumComp] = pSrc[x];
-                    }
-                };
-
-                switch (BitsPerSample)
+                TIFFReadScanline(TiffFile, pDataPtr, row);
+            }
+        }
+        else if (PlanarConfig == PLANARCONFIG_SEPARATE)
+        {
+            std::vector<Uint8> ScanlineData(ScanlineSize);
+            for (Uint32 row = 0; row < Desc.Height; ++row)
+            {
+                for (Uint16 comp = 0; comp < Desc.NumComponents; ++comp)
                 {
-                    case 8:
-                        CopyComponet(reinterpret_cast<const Uint8*>(ScanlineData.data()), reinterpret_cast<Uint8*>(pDstRow));
-                        break;
+                    Uint8* const pDstRow = pDstPixels->GetDataPtr<Uint8>() + Desc.RowStride * row + comp;
 
-                    case 16:
-                        CopyComponet(reinterpret_cast<const Uint16*>(ScanlineData.data()), reinterpret_cast<Uint16*>(pDstRow));
-                        break;
+                    TIFFReadScanline(TiffFile, ScanlineData.data(), row, comp);
 
-                    case 32:
-                        CopyComponet(reinterpret_cast<const Uint32*>(ScanlineData.data()), reinterpret_cast<Uint32*>(pDstRow));
-                        break;
+                    auto CopyComponet = [Width = Desc.Width, NumComp = Desc.NumComponents](const auto* pSrc, auto* pDst) {
+                        for (Uint32 x = 0; x < Width; ++x)
+                        {
+                            pDst[x * NumComp] = pSrc[x];
+                        }
+                    };
 
-                    default:
-                        UNEXPECTED("Unexpected component bit depth (", BitsPerSample, ").");
+                    switch (BitsPerSample)
+                    {
+                        case 8:
+                            CopyComponet(reinterpret_cast<const Uint8*>(ScanlineData.data()), reinterpret_cast<Uint8*>(pDstRow));
+                            break;
+
+                        case 16:
+                            CopyComponet(reinterpret_cast<const Uint16*>(ScanlineData.data()), reinterpret_cast<Uint16*>(pDstRow));
+                            break;
+
+                        case 32:
+                            CopyComponet(reinterpret_cast<const Uint32*>(ScanlineData.data()), reinterpret_cast<Uint32*>(pDstRow));
+                            break;
+
+                        default:
+                            UNEXPECTED("Unexpected component bit depth (", BitsPerSample, ").");
+                    }
                 }
             }
         }
+        else
+        {
+            UNEXPECTED("Unexpected planar configuration (", PlanarConfig, ").");
+        }
     }
-    else
-    {
-        UNEXPECTED("Unexpected planar configuration (", PlanarConfig, ").");
-    }
+
     TIFFClose(TiffFile);
 }
 
 
-static bool LoadHDRFile(IDataBlob* pSrcHdrBits, IDataBlob* pDstPixels, ImageDesc* pDstImgDesc)
+static bool LoadImageSTB(const void* pSrcImage,
+                         size_t      ImageSize,
+                         VALUE_TYPE  ComponentType,
+                         IDataBlob*  pDstPixels,
+                         ImageDesc*  pDstImgDesc)
 {
-    Int32  Width = 0, Height = 0, NumComponents = 0;
-    float* pFloatData = stbi_loadf_from_memory(static_cast<const Uint8*>(pSrcHdrBits->GetConstDataPtr()), static_cast<Int32>(pSrcHdrBits->GetSize()), &Width, &Height, &NumComponents, 0);
-    if (pFloatData == nullptr)
+    int   Width         = 0;
+    int   Height        = 0;
+    int   NumComponents = 0;
+    void* pDecodedData  = nullptr;
+    if (pDstPixels != nullptr)
     {
-        LOG_ERROR_MESSAGE("Failed to load HDR image from memory. STB supports only 32-bit rle rgbe textures");
-        return false;
-    }
+        switch (ComponentType)
+        {
+            case VT_FLOAT32:
+                pDecodedData = stbi_loadf_from_memory(static_cast<const stbi_uc*>(pSrcImage), static_cast<int>(ImageSize), &Width, &Height, &NumComponents, 0);
+                break;
 
-    pDstImgDesc->ComponentType = VT_FLOAT32;
-    pDstImgDesc->Width         = static_cast<Uint32>(Width);
-    pDstImgDesc->Height        = static_cast<Uint32>(Height);
-    pDstImgDesc->NumComponents = NumComponents;
-    pDstImgDesc->RowStride     = pDstImgDesc->Width * pDstImgDesc->NumComponents * sizeof(float);
+            case VT_UINT8:
+            case VT_INT8:
+                pDecodedData = stbi_load_from_memory(static_cast<const stbi_uc*>(pSrcImage), static_cast<int>(ImageSize), &Width, &Height, &NumComponents, 0);
+                break;
 
-    pDstPixels->Resize(pDstImgDesc->Height * pDstImgDesc->RowStride);
-    memcpy(pDstPixels->GetDataPtr(), pFloatData, pDstImgDesc->Height * pDstImgDesc->RowStride);
-    stbi_image_free(pFloatData);
-    return true;
-}
+            case VT_UINT16:
+            case VT_INT16:
+                pDecodedData = stbi_load_16_from_memory(static_cast<const stbi_uc*>(pSrcImage), static_cast<int>(ImageSize), &Width, &Height, &NumComponents, 0);
+                break;
 
-static bool LoadTGAFile(IDataBlob* pSrcTgaBits, IDataBlob* pDstPixels, ImageDesc* pDstImgDesc)
-{
-    Int32  Width = 0, Height = 0, NumComponents = 0;
-    Uint8* pFloatData = stbi_load_from_memory(static_cast<const Uint8*>(pSrcTgaBits->GetConstDataPtr()), static_cast<Int32>(pSrcTgaBits->GetSize()), &Width, &Height, &NumComponents, 0);
-    if (pFloatData == nullptr)
-    {
-        LOG_ERROR_MESSAGE("Failed to load TGA image from memory");
-        return false;
-    }
+            default:
+                UNEXPECTED("Unexpected component type");
+        }
 
-    pDstImgDesc->ComponentType = VT_UINT8;
-    pDstImgDesc->Width         = static_cast<Uint32>(Width);
-    pDstImgDesc->Height        = static_cast<Uint32>(Height);
-    pDstImgDesc->NumComponents = NumComponents;
-    pDstImgDesc->RowStride     = pDstImgDesc->Width * pDstImgDesc->NumComponents * sizeof(Uint8);
-
-    pDstPixels->Resize(pDstImgDesc->Height * pDstImgDesc->RowStride);
-    memcpy(pDstPixels->GetDataPtr(), pFloatData, pDstImgDesc->Height * pDstImgDesc->RowStride);
-    stbi_image_free(pFloatData);
-    return true;
-}
-
-Image::Image(IReferenceCounters*  pRefCounters,
-             IDataBlob*           pFileData,
-             const ImageLoadInfo& LoadInfo) :
-    TBase{pRefCounters},
-    m_pData{DataBlobImpl::Create()}
-{
-    if (LoadInfo.Format == IMAGE_FILE_FORMAT_TIFF)
-    {
-        LoadTiffFile(pFileData, LoadInfo);
-    }
-    else if (LoadInfo.Format == IMAGE_FILE_FORMAT_HDR)
-    {
-        bool Res = LoadHDRFile(pFileData, m_pData.RawPtr(), &m_Desc);
-        if (!Res)
-            LOG_ERROR_MESSAGE("Failed to load HDR image");
-    }
-    else if (LoadInfo.Format == IMAGE_FILE_FORMAT_TGA)
-    {
-        bool Res = LoadTGAFile(pFileData, m_pData.RawPtr(), &m_Desc);
-        if (!Res)
-            LOG_ERROR_MESSAGE("Failed to load TGA image");
-    }
-    else if (LoadInfo.Format == IMAGE_FILE_FORMAT_PNG)
-    {
-        auto Res = DecodePng(pFileData, m_pData.RawPtr(), &m_Desc);
-        if (Res != DECODE_PNG_RESULT_OK)
-            LOG_ERROR_MESSAGE("Failed to decode png image");
-    }
-    else if (LoadInfo.Format == IMAGE_FILE_FORMAT_JPEG)
-    {
-        auto Res = DecodeJpeg(pFileData, m_pData.RawPtr(), &m_Desc);
-        if (Res != DECODE_JPEG_RESULT_OK)
-            LOG_ERROR_MESSAGE("Failed to decode jpeg image");
-    }
-    else if (LoadInfo.Format == IMAGE_FILE_FORMAT_SGI)
-    {
-        auto Res = LoadSGI(pFileData, m_pData.RawPtr(), &m_Desc);
-        if (!Res)
-            LOG_ERROR_MESSAGE("Failed to load SGI image");
-    }
-    else if (LoadInfo.Format == IMAGE_FILE_FORMAT_DDS)
-    {
-        LOG_ERROR_MESSAGE("An image can't be created from DDS file. Use CreateTextureFromFile() or CreateTextureFromDDS() functions.");
-    }
-    else if (LoadInfo.Format == IMAGE_FILE_FORMAT_KTX)
-    {
-        LOG_ERROR_MESSAGE("An image can't be created from KTX file. Use CreateTextureFromFile() or CreateTextureFromKTX() functions.");
+        if (pDecodedData == nullptr)
+        {
+            return false;
+        }
     }
     else
     {
-        LOG_ERROR_MESSAGE("Unknown image format.");
+        if (!stbi_info_from_memory(static_cast<const stbi_uc*>(pSrcImage), static_cast<int>(ImageSize), &Width, &Height, &NumComponents))
+        {
+            return false;
+        }
+    }
+
+    pDstImgDesc->ComponentType = ComponentType;
+    pDstImgDesc->Width         = static_cast<Uint32>(Width);
+    pDstImgDesc->Height        = static_cast<Uint32>(Height);
+    pDstImgDesc->NumComponents = NumComponents;
+
+    if (pDstPixels != nullptr)
+    {
+        pDstImgDesc->RowStride = pDstImgDesc->Width * pDstImgDesc->NumComponents * GetValueSize(ComponentType);
+        pDstPixels->Resize(pDstImgDesc->Height * pDstImgDesc->RowStride);
+        memcpy(pDstPixels->GetDataPtr(), pDecodedData, pDstImgDesc->Height * pDstImgDesc->RowStride);
+        stbi_image_free(pDecodedData);
+    }
+
+    return true;
+}
+
+bool Image::Load(IMAGE_FILE_FORMAT FileFormat, const void* pSrcData, size_t SrcDataSize, IDataBlob* pDstPixels, ImageDesc& Desc)
+{
+    bool Result = false;
+    switch (FileFormat)
+    {
+        case IMAGE_FILE_FORMAT_TIFF:
+            try
+            {
+                LoadTiffFile(pSrcData, SrcDataSize, pDstPixels, Desc);
+                Result = true;
+            }
+            catch (...)
+            {
+                LOG_ERROR_MESSAGE("Failed to load TIFF image");
+                Result = false;
+            }
+            break;
+
+        case IMAGE_FILE_FORMAT_HDR:
+            Result = LoadImageSTB(pSrcData, SrcDataSize, VT_FLOAT32, pDstPixels, &Desc);
+            if (!Result)
+            {
+                LOG_ERROR_MESSAGE("Failed to load HDR image from memory. STB only supports 32-bit rle rgbe textures");
+            }
+            break;
+
+        case IMAGE_FILE_FORMAT_TGA:
+            Result = LoadImageSTB(pSrcData, SrcDataSize, VT_UINT8, pDstPixels, &Desc);
+            if (!Result)
+            {
+                LOG_ERROR_MESSAGE("Failed to load TGA image");
+            }
+            break;
+
+        case IMAGE_FILE_FORMAT_PNG:
+            Result = DecodePng(pSrcData, SrcDataSize, pDstPixels, &Desc) == DECODE_PNG_RESULT_OK;
+            if (!Result)
+            {
+                LOG_ERROR_MESSAGE("Failed to load png image");
+            }
+            break;
+
+        case IMAGE_FILE_FORMAT_JPEG:
+            Result = DecodeJpeg(pSrcData, SrcDataSize, pDstPixels, &Desc) == DECODE_JPEG_RESULT_OK;
+            if (!Result)
+            {
+                LOG_ERROR_MESSAGE("Failed to load jpeg image");
+            }
+            break;
+
+        case IMAGE_FILE_FORMAT_SGI:
+            Result = LoadSGI(pSrcData, SrcDataSize, pDstPixels, &Desc);
+            if (!Result)
+            {
+                LOG_ERROR_MESSAGE("Failed to load SGI image");
+            }
+            break;
+
+        case IMAGE_FILE_FORMAT_DDS:
+            Result = false;
+            LOG_ERROR_MESSAGE("An image can't be created from DDS file. Use CreateTextureFromFile() or CreateTextureFromDDS() functions.");
+            break;
+
+        case IMAGE_FILE_FORMAT_KTX:
+            Result = false;
+            LOG_ERROR_MESSAGE("An image can't be created from KTX file. Use CreateTextureFromFile() or CreateTextureFromKTX() functions.");
+            break;
+
+        default:
+            Result = false;
+            LOG_ERROR_MESSAGE("Unknown image format.");
+            break;
+    }
+
+    return Result;
+}
+
+ImageDesc Image::GetDesc(IMAGE_FILE_FORMAT FileFormat, const void* pSrcData, size_t SrcDataSize)
+{
+    ImageDesc Desc;
+    Load(FileFormat, pSrcData, SrcDataSize, nullptr, Desc);
+    return Desc;
+}
+
+Image::Image(IReferenceCounters*  pRefCounters,
+             const void*          pSrcData,
+             size_t               SrcDataSize,
+             const ImageLoadInfo& LoadInfo) :
+    TBase{pRefCounters},
+    m_pData{DataBlobImpl::Create(LoadInfo.pAllocator)}
+{
+    if (!Load(LoadInfo.Format, pSrcData, SrcDataSize, m_pData, m_Desc))
+    {
+        return;
     }
 
     if (LoadInfo.PermultiplyAlpha && m_Desc.NumComponents == 4)
@@ -394,28 +466,29 @@ Image::Image(IReferenceCounters*  pRefCounters,
     }
 }
 
-void Image::CreateFromDataBlob(IDataBlob*           pFileData,
-                               const ImageLoadInfo& LoadInfo,
-                               Image**              ppImage)
+void Image::CreateFromMemory(const void*          pSrcData,
+                             size_t               SrcDataSize,
+                             const ImageLoadInfo& LoadInfo,
+                             Image**              ppImage)
 {
-    *ppImage = MakeNewRCObj<Image>()(pFileData, LoadInfo);
+    *ppImage = MakeNewRCObj<Image>()(pSrcData, SrcDataSize, LoadInfo);
     (*ppImage)->AddRef();
 }
 
-Image::Image(IReferenceCounters* pRefCounters,
-             const ImageDesc&    Desc,
-             IDataBlob*          pPixels) :
+Image::Image(IReferenceCounters*      pRefCounters,
+             const ImageDesc&         Desc,
+             RefCntAutoPtr<IDataBlob> pPixels) :
     TBase{pRefCounters},
     m_Desc{Desc},
-    m_pData{pPixels}
+    m_pData{std::move(pPixels)}
 {
 }
 
-void Image::CreateFromMemory(const ImageDesc& Desc,
-                             IDataBlob*       pPixels,
-                             Image**          ppImage)
+void Image::CreateFromPixels(const ImageDesc&         Desc,
+                             RefCntAutoPtr<IDataBlob> pPixels,
+                             Image**                  ppImage)
 {
-    *ppImage = MakeNewRCObj<Image>()(Desc, pPixels);
+    *ppImage = MakeNewRCObj<Image>()(Desc, std::move(pPixels));
     (*ppImage)->AddRef();
 }
 
@@ -476,12 +549,12 @@ std::vector<Uint8> Image::ConvertImageData(Uint32         Width,
 
 void Image::Encode(const EncodeInfo& Info, IDataBlob** ppEncodedData)
 {
-    auto pEncodedData = DataBlobImpl::Create();
+    auto pEncodedData = DataBlobImpl::Create(Info.pAllocator);
     if (Info.FileFormat == IMAGE_FILE_FORMAT_JPEG)
     {
         auto RGBData = ConvertImageData(Info.Width, Info.Height, reinterpret_cast<const Uint8*>(Info.pData), Info.Stride, Info.TexFormat, TEX_FORMAT_RGBA8_UNORM, false, Info.FlipY);
 
-        auto Res = EncodeJpeg(RGBData.data(), Info.Width, Info.Height, Info.JpegQuality, pEncodedData.RawPtr());
+        auto Res = EncodeJpeg(RGBData.data(), Info.Width, Info.Height, Info.JpegQuality, pEncodedData);
         if (Res != ENCODE_JPEG_RESULT_OK)
             LOG_ERROR_MESSAGE("Failed to encode jpeg file");
     }
@@ -497,7 +570,7 @@ void Image::Encode(const EncodeInfo& Info, IDataBlob** ppEncodedData)
             Stride        = Info.Width * (Info.KeepAlpha ? 4 : 3);
         }
 
-        auto Res = EncodePng(pData, Info.Width, Info.Height, Stride, Info.KeepAlpha ? PNG_COLOR_TYPE_RGBA : PNG_COLOR_TYPE_RGB, pEncodedData.RawPtr());
+        auto Res = EncodePng(pData, Info.Width, Info.Height, Stride, Info.KeepAlpha ? PNG_COLOR_TYPE_RGBA : PNG_COLOR_TYPE_RGB, pEncodedData);
         if (Res != ENCODE_PNG_RESULT_OK)
             LOG_ERROR_MESSAGE("Failed to encode png file");
     }
@@ -589,6 +662,16 @@ IMAGE_FILE_FORMAT Image::GetFileFormat(const Uint8* pData, size_t Size, const ch
     return IMAGE_FILE_FORMAT_UNKNOWN;
 }
 
+bool Image::IsSupportedFileFormat(IMAGE_FILE_FORMAT Format)
+{
+    return (Format == IMAGE_FILE_FORMAT_PNG ||
+            Format == IMAGE_FILE_FORMAT_JPEG ||
+            Format == IMAGE_FILE_FORMAT_TIFF ||
+            Format == IMAGE_FILE_FORMAT_SGI ||
+            Format == IMAGE_FILE_FORMAT_HDR ||
+            Format == IMAGE_FILE_FORMAT_TGA);
+}
+
 template <typename T>
 bool IsImageUniform(const void* pData, Uint32 Width, Uint32 Height, Uint32 NumComponents, Uint32 RowStride)
 {
@@ -654,23 +737,20 @@ IMAGE_FILE_FORMAT CreateImageFromFile(const Char* FilePath,
         if (!pFileStream->IsValid())
             LOG_ERROR_AND_THROW("Failed to open image file \"", FilePath, '\"');
 
-        auto pFileData = DataBlobImpl::Create();
+        RefCntAutoPtr<DataBlobImpl> pFileData = DataBlobImpl::Create();
         pFileStream->ReadBlob(pFileData);
 
-        ImgFileFormat = Image::GetFileFormat(static_cast<const Uint8*>(pFileData->GetDataPtr()), pFileData->GetSize(), FilePath);
+        ImgFileFormat = Image::GetFileFormat(pFileData->GetConstDataPtr<Uint8>(), pFileData->GetSize(), FilePath);
         if (ImgFileFormat == IMAGE_FILE_FORMAT_UNKNOWN)
         {
             LOG_ERROR_AND_THROW("Unable to derive image format for file '", FilePath, "\".");
         }
 
-        if (ImgFileFormat == IMAGE_FILE_FORMAT_PNG ||
-            ImgFileFormat == IMAGE_FILE_FORMAT_JPEG ||
-            ImgFileFormat == IMAGE_FILE_FORMAT_TIFF ||
-            ImgFileFormat == IMAGE_FILE_FORMAT_SGI)
+        if (Image::IsSupportedFileFormat(ImgFileFormat))
         {
             ImageLoadInfo ImgLoadInfo;
             ImgLoadInfo.Format = ImgFileFormat;
-            Image::CreateFromDataBlob(pFileData, ImgLoadInfo, ppImage);
+            Image::CreateFromMemory(pFileData->GetConstDataPtr(), pFileData->GetSize(), ImgLoadInfo, ppImage);
         }
         else if (ppRawData != nullptr)
         {
@@ -689,6 +769,12 @@ IMAGE_FILE_FORMAT CreateImageFromMemory(const void* pImageData,
                                         size_t      DataSize,
                                         Image**     ppImage)
 {
+    if (pImageData == nullptr)
+    {
+        UNEXPECTED("pImageData must not be null");
+        return IMAGE_FILE_FORMAT_UNKNOWN;
+    }
+
     IMAGE_FILE_FORMAT ImgFileFormat = IMAGE_FILE_FORMAT_UNKNOWN;
     try
     {
@@ -698,15 +784,11 @@ IMAGE_FILE_FORMAT CreateImageFromMemory(const void* pImageData,
             LOG_ERROR_AND_THROW("Unable to derive image format");
         }
 
-        if (ImgFileFormat == IMAGE_FILE_FORMAT_PNG ||
-            ImgFileFormat == IMAGE_FILE_FORMAT_JPEG ||
-            ImgFileFormat == IMAGE_FILE_FORMAT_TIFF ||
-            ImgFileFormat == IMAGE_FILE_FORMAT_SGI)
+        if (Image::IsSupportedFileFormat(ImgFileFormat))
         {
             ImageLoadInfo ImgLoadInfo;
             ImgLoadInfo.Format = ImgFileFormat;
-            RefCntAutoPtr<IDataBlob> pImageDataBlob{ProxyDataBlob::Create(pImageData, DataSize)};
-            Image::CreateFromDataBlob(pImageDataBlob, ImgLoadInfo, ppImage);
+            Image::CreateFromMemory(pImageData, DataSize, ImgLoadInfo, ppImage);
         }
     }
     catch (std::runtime_error& err)

@@ -35,24 +35,25 @@
 
 struct PNGReadFnState
 {
-    IDataBlob* pPngBits;
-    size_t     Offset;
+    const IDataBlob* pPngBits;
+    size_t           Offset;
 };
 typedef struct PNGReadFnState PNGReadFnState;
 
 static void PngReadCallback(png_structp pngPtr, png_bytep data, png_size_t length)
 {
     PNGReadFnState* pState  = (PNGReadFnState*)(png_get_io_ptr(pngPtr));
-    Uint8*          pDstPtr = (Uint8*)IDataBlob_GetDataPtr(pState->pPngBits) + pState->Offset;
-    memcpy(data, pDstPtr, length);
+    const void*     pSrcPtr = (const char*)pState->pPngBits + pState->Offset;
+    memcpy(data, pSrcPtr, length);
     pState->Offset += length;
 }
 
-DECODE_PNG_RESULT Diligent_DecodePng(IDataBlob* pSrcPngBits,
-                                     IDataBlob* pDstPixels,
-                                     ImageDesc* pDstImgDesc)
+DECODE_PNG_RESULT Diligent_DecodePng(const void* pSrcPngBits,
+                                     size_t      PngDataSize,
+                                     IDataBlob*  pDstPixels,
+                                     ImageDesc*  pDstImgDesc)
 {
-    if (!pSrcPngBits || !pDstPixels || !pDstImgDesc)
+    if (!pSrcPngBits || !pDstImgDesc)
         return DECODE_PNG_RESULT_INVALID_ARGUMENTS;
 
     // http://www.piko3d.net/tutorials/libpng-tutorial-loading-png-files-from-streams/
@@ -60,7 +61,7 @@ DECODE_PNG_RESULT Diligent_DecodePng(IDataBlob* pSrcPngBits,
     // https://gist.github.com/niw/5963798
 
     const size_t    PngSigSize = 8;
-    png_const_bytep pngsig     = (png_const_bytep)IDataBlob_GetConstDataPtr(pSrcPngBits);
+    png_const_bytep pngsig     = (png_const_bytep)pSrcPngBits;
     //Let LibPNG check the signature. If this function returns 0, everything is OK.
     if (png_sig_cmp(pngsig, 0, PngSigSize) != 0)
     {
@@ -159,24 +160,28 @@ DECODE_PNG_RESULT Diligent_DecodePng(IDataBlob* pSrcPngBits,
         }
     }
 
-    //Array of row pointers. One for every row.
-    rowPtrs = malloc(sizeof(png_bytep) * pDstImgDesc->Height);
+    if (pDstPixels != NULL)
+    {
+        //Array of row pointers. One for every row.
+        rowPtrs = malloc(sizeof(png_bytep) * pDstImgDesc->Height);
 
-    //Allocate a buffer with enough space.
-    pDstImgDesc->RowStride = pDstImgDesc->Width * (Uint32)bit_depth * pDstImgDesc->NumComponents / 8u;
-    // Align stride to 4 bytes
-    pDstImgDesc->RowStride = (pDstImgDesc->RowStride + 3u) & ~3u;
+        //Allocate a buffer with enough space.
+        pDstImgDesc->RowStride = pDstImgDesc->Width * (Uint32)bit_depth * pDstImgDesc->NumComponents / 8u;
+        // Align stride to 4 bytes
+        pDstImgDesc->RowStride = (pDstImgDesc->RowStride + 3u) & ~3u;
 
-    IDataBlob_Resize(pDstPixels, pDstImgDesc->Height * (size_t)pDstImgDesc->RowStride);
-    png_bytep pRow0 = IDataBlob_GetDataPtr(pDstPixels);
-    for (size_t i = 0; i < pDstImgDesc->Height; i++)
-        rowPtrs[i] = pRow0 + i * pDstImgDesc->RowStride;
+        IDataBlob_Resize(pDstPixels, pDstImgDesc->Height * (size_t)pDstImgDesc->RowStride);
+        png_bytep pRow0 = IDataBlob_GetDataPtr(pDstPixels, 0);
+        for (size_t i = 0; i < pDstImgDesc->Height; i++)
+            rowPtrs[i] = pRow0 + i * pDstImgDesc->RowStride;
 
-    //Read the imagedata and write it to the addresses pointed to
-    //by rowptrs (in other words: our image databuffer)
-    png_read_image(png, rowPtrs);
+        //Read the imagedata and write it to the addresses pointed to
+        //by rowptrs (in other words: our image databuffer)
+        png_read_image(png, rowPtrs);
 
-    free(rowPtrs);
+        free(rowPtrs);
+    }
+
     png_destroy_read_struct(&png, &info, (png_infopp)0);
 
     return DECODE_PNG_RESULT_OK;
@@ -187,7 +192,7 @@ static void PngWriteCallback(png_structp png_ptr, png_bytep data, png_size_t len
     IDataBlob* pEncodedData = (IDataBlob*)png_get_io_ptr(png_ptr);
     size_t     PrevSize     = IDataBlob_GetSize(pEncodedData);
     IDataBlob_Resize(pEncodedData, PrevSize + length);
-    Uint8* pBytes = (Uint8*)IDataBlob_GetDataPtr(pEncodedData);
+    Uint8* pBytes = (Uint8*)IDataBlob_GetDataPtr(pEncodedData, 0);
     memcpy(pBytes + PrevSize, data, length);
 }
 
