@@ -58,23 +58,23 @@ static_assert(sizeof(SGIHeader) == 512, "must be 512 bytes");
 } // namespace
 
 // http://paulbourke.net/dataformats/sgirgb/sgiversion.html
-bool LoadSGI(IDataBlob* pSGIData,
-             IDataBlob* pDstPixels,
-             ImageDesc* pDstImgDesc)
+bool LoadSGI(const void* pSGIData,
+             size_t      DataSize,
+             IDataBlob*  pDstPixels,
+             ImageDesc*  pDstImgDesc)
 {
-    VERIFY_EXPR(pSGIData != nullptr && pDstPixels != nullptr && pDstImgDesc != nullptr);
-    const auto* pDataStart = reinterpret_cast<const Uint8*>(pSGIData->GetConstDataPtr());
-    const auto  Size       = pSGIData->GetSize();
-    const auto* pDataEnd   = pDataStart + Size;
-    const auto* pSrcPtr    = pDataStart;
+    VERIFY_EXPR(pSGIData != nullptr && pDstImgDesc != nullptr);
+    const Uint8* pDataStart = static_cast<const Uint8*>(pSGIData);
+    const Uint8* pDataEnd   = pDataStart + DataSize;
+    const Uint8* pSrcPtr    = pDataStart;
 
-    if (Size < sizeof(SGIHeader))
+    if (DataSize < sizeof(SGIHeader))
     {
-        LOG_ERROR_MESSAGE("The SGI data size (", Size, ") is smaller than the size of required SGI header (", sizeof(SGIHeader), ").");
+        LOG_ERROR_MESSAGE("The SGI data size (", DataSize, ") is smaller than the size of required SGI header (", sizeof(SGIHeader), ").");
         return false;
     }
 
-    const auto& Header = reinterpret_cast<const SGIHeader&>(*pSrcPtr);
+    const SGIHeader& Header = reinterpret_cast<const SGIHeader&>(*pSrcPtr);
     pSrcPtr += sizeof(SGIHeader);
 
     constexpr Uint16 SGIMagic = 0xda01u;
@@ -111,9 +111,12 @@ bool LoadSGI(IDataBlob* pSGIData,
             return false;
     }
 
+    if (pDstPixels == nullptr)
+        return true;
+
     pDstImgDesc->RowStride = Width * NumChannels * BytesPerChannel;
     pDstPixels->Resize(size_t{Height} * pDstImgDesc->RowStride);
-    auto* pDstPtr = reinterpret_cast<Uint8*>(pDstPixels->GetDataPtr());
+    Uint8* pDstPtr = pDstPixels->GetDataPtr<Uint8>();
 
     if (Header.Compression == 0)
     {
@@ -151,14 +154,14 @@ bool LoadSGI(IDataBlob* pSGIData,
         // RLE-compressed SGI image
 
         // Offsets table starts at byte 512 and is Height * NumChannels * 4 bytes long.
-        const auto  TableSize     = sizeof(Uint32) * Height * NumChannels;
-        const auto* OffsetTableBE = reinterpret_cast<const Uint32*>(pSrcPtr);
+        const size_t  TableSize     = sizeof(Uint32) * Height * NumChannels;
+        const Uint32* OffsetTableBE = reinterpret_cast<const Uint32*>(pSrcPtr);
         pSrcPtr += TableSize;
         if (pSrcPtr > pDataEnd)
             return false;
 
         // Length table follows the offsets table and is the same size.
-        const auto* LengthTableBE = reinterpret_cast<const Uint32*>(pSrcPtr);
+        const Uint32* LengthTableBE = reinterpret_cast<const Uint32*>(pSrcPtr);
         pSrcPtr += TableSize;
         if (pSrcPtr > pDataEnd)
             return false;
@@ -207,11 +210,11 @@ bool LoadSGI(IDataBlob* pSGIData,
             {
                 // Each unsigned int in the offset table is the offset (from the file start) to the
                 // start of the compressed data of each scanline for each channel.
-                const auto RleOff = PlatformMisc::SwapBytes(OffsetTableBE[y + c * Height]);
+                const Uint32 RleOff = PlatformMisc::SwapBytes(OffsetTableBE[y + c * Height]);
                 // The size table tells the size of the compressed data (unsigned int) of each scanline.
-                const auto RleLen = PlatformMisc::SwapBytes(LengthTableBE[y + c * Height]);
+                const Uint32 RleLen = PlatformMisc::SwapBytes(LengthTableBE[y + c * Height]);
 
-                auto* DstLine = pDstPtr + y * size_t{pDstImgDesc->RowStride} + c;
+                Uint8* DstLine = pDstPtr + y * size_t{pDstImgDesc->RowStride} + c;
                 if (!ReadLine(DstLine, pDataStart + RleOff, pSrcPtr + RleOff + RleLen))
                     return false;
             }
@@ -230,10 +233,11 @@ bool LoadSGI(IDataBlob* pSGIData,
 
 extern "C"
 {
-    void Diligent_LoadSGI(Diligent::IDataBlob* pSGIData,
+    void Diligent_LoadSGI(const void*          pSGIData,
+                          size_t               DataSize,
                           Diligent::IDataBlob* pDstPixels,
                           Diligent::ImageDesc* pDstImgDesc)
     {
-        Diligent::LoadSGI(pSGIData, pDstPixels, pDstImgDesc);
+        Diligent::LoadSGI(pSGIData, DataSize, pDstPixels, pDstImgDesc);
     }
 }

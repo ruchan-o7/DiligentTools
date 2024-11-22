@@ -1,5 +1,5 @@
 /*
- *  Copyright 2019-2022 Diligent Graphics LLC
+ *  Copyright 2019-2024 Diligent Graphics LLC
  *  Copyright 2015-2019 Egor Yusov
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,33 +63,45 @@ TEST(Tools_TextureLoader, PNGCodec)
             }
         }
 
-        auto pPngData = DataBlobImpl::Create();
+        RefCntAutoPtr<IDataBlob> pPngData = DataBlobImpl::Create();
 
-        auto Res = EncodePng(RefPixels.data(), TestImgWidth, TestImgHeight, TestImgWidth * NumComponents,
-                             EncodeAlpha ? PNG_COLOR_TYPE_RGBA : PNG_COLOR_TYPE_RGB,
-                             pPngData);
+        ENCODE_PNG_RESULT Res = EncodePng(RefPixels.data(), TestImgWidth, TestImgHeight, TestImgWidth * NumComponents,
+                                          EncodeAlpha ? PNG_COLOR_TYPE_RGBA : PNG_COLOR_TYPE_RGB,
+                                          pPngData);
         ASSERT_EQ(Res, ENCODE_PNG_RESULT_OK);
 
-        auto pDecodedPixelsBlob = DataBlobImpl::Create();
-
-        ImageDesc DecodedImgDesc;
-        DecodePng(pPngData, pDecodedPixelsBlob, &DecodedImgDesc);
-
-        ASSERT_EQ(DecodedImgDesc.Width, TestImgWidth);
-        ASSERT_EQ(DecodedImgDesc.Height, TestImgHeight);
-        ASSERT_EQ(DecodedImgDesc.NumComponents, NumComponents);
-        ASSERT_EQ(DecodedImgDesc.ComponentType, VT_UINT8);
-
-        const Uint8* pTestPixels = reinterpret_cast<const Uint8*>(pDecodedPixelsBlob->GetDataPtr());
-        for (Uint32 y = 0; y < TestImgHeight; ++y)
         {
-            for (Uint32 x = 0; x < TestImgWidth; ++x)
+            ImageDesc DecodedImgDesc;
+            EXPECT_EQ(DecodePng(pPngData->GetConstDataPtr(), pPngData->GetSize(), nullptr, &DecodedImgDesc), DECODE_PNG_RESULT_OK);
+
+            EXPECT_EQ(DecodedImgDesc.Width, TestImgWidth);
+            EXPECT_EQ(DecodedImgDesc.Height, TestImgHeight);
+            EXPECT_EQ(DecodedImgDesc.NumComponents, NumComponents);
+            EXPECT_EQ(DecodedImgDesc.ComponentType, VT_UINT8);
+        }
+
+        {
+            RefCntAutoPtr<IDataBlob> pDecodedPixelsBlob = DataBlobImpl::Create();
+
+            ImageDesc DecodedImgDesc;
+            ASSERT_EQ(DecodePng(pPngData->GetConstDataPtr(), pPngData->GetSize(), pDecodedPixelsBlob, &DecodedImgDesc), DECODE_PNG_RESULT_OK);
+
+            ASSERT_EQ(DecodedImgDesc.Width, TestImgWidth);
+            ASSERT_EQ(DecodedImgDesc.Height, TestImgHeight);
+            ASSERT_EQ(DecodedImgDesc.NumComponents, NumComponents);
+            ASSERT_EQ(DecodedImgDesc.ComponentType, VT_UINT8);
+
+            const Uint8* pTestPixels = pDecodedPixelsBlob->GetConstDataPtr<Uint8>();
+            for (Uint32 y = 0; y < TestImgHeight; ++y)
             {
-                for (Uint32 c = 0; c < NumComponents; ++c)
+                for (Uint32 x = 0; x < TestImgWidth; ++x)
                 {
-                    auto RefVal  = RefPixels[(x + y * TestImgWidth) * NumComponents + c];
-                    auto TestVal = pTestPixels[x * DecodedImgDesc.NumComponents + c + y * DecodedImgDesc.RowStride];
-                    EXPECT_EQ(static_cast<Uint32>(RefVal), static_cast<Uint32>(TestVal)) << "[" << x << "," << y << "][" << c << "]";
+                    for (Uint32 c = 0; c < NumComponents; ++c)
+                    {
+                        Uint8 RefVal  = RefPixels[(x + y * TestImgWidth) * NumComponents + c];
+                        Uint8 TestVal = pTestPixels[x * DecodedImgDesc.NumComponents + c + y * DecodedImgDesc.RowStride];
+                        EXPECT_EQ(static_cast<Uint32>(RefVal), static_cast<Uint32>(TestVal)) << "[" << x << "," << y << "][" << c << "]";
+                    }
                 }
             }
         }

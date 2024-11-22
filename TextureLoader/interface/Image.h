@@ -84,6 +84,9 @@ struct ImageLoadInfo
     ///
     /// \note This flag is only used if PermultiplyAlpha is true.
     bool IsSRGB DEFAULT_INITIALIZER(false);
+
+    /// Memory allocator
+    struct IMemoryAllocator* pAllocator DEFAULT_INITIALIZER(nullptr);
 };
 typedef struct ImageLoadInfo ImageLoadInfo;
 
@@ -122,26 +125,28 @@ struct Image : public ObjectBase<IObject>
     /// \param [in] LoadInfo - Image loading information
     /// \param [out] ppImage - Memory location where pointer to the created image is written.
     ///                        The image should be released via Release().
-    static void CreateFromDataBlob(IDataBlob*           pFileData,
-                                   const ImageLoadInfo& LoadInfo,
-                                   Image**              ppImage);
+    static void CreateFromMemory(const void*          pSrcData,
+                                 size_t               SrcDataSize,
+                                 const ImageLoadInfo& LoadInfo,
+                                 Image**              ppImage);
 
-    /// Creates a new image from memory
-    static void CreateFromMemory(const ImageDesc& Desc,
-                                 IDataBlob*       pPixels,
-                                 Image**          ppImage);
+    /// Creates a new image using existing pixel data
+    static void CreateFromPixels(const ImageDesc&         Desc,
+                                 RefCntAutoPtr<IDataBlob> pPixels,
+                                 Image**                  ppImage);
 
     struct EncodeInfo
     {
-        Uint32            Width       = 0;
-        Uint32            Height      = 0;
-        TEXTURE_FORMAT    TexFormat   = TEX_FORMAT_UNKNOWN;
-        bool              KeepAlpha   = false;
-        bool              FlipY       = false;
-        const void*       pData       = nullptr;
-        Uint32            Stride      = 0;
-        IMAGE_FILE_FORMAT FileFormat  = IMAGE_FILE_FORMAT_JPEG;
-        int               JpegQuality = 95;
+        Uint32                   Width       = 0;
+        Uint32                   Height      = 0;
+        TEXTURE_FORMAT           TexFormat   = TEX_FORMAT_UNKNOWN;
+        bool                     KeepAlpha   = false;
+        bool                     FlipY       = false;
+        const void*              pData       = nullptr;
+        Uint32                   Stride      = 0;
+        IMAGE_FILE_FORMAT        FileFormat  = IMAGE_FILE_FORMAT_JPEG;
+        int                      JpegQuality = 95;
+        struct IMemoryAllocator* pAllocator  = nullptr;
     };
     static void Encode(const EncodeInfo& Info, IDataBlob** ppEncodedData);
 
@@ -162,7 +167,11 @@ struct Image : public ObjectBase<IObject>
                                                bool           KeepAlpha,
                                                bool           FlipY);
 
+    static bool IsSupportedFileFormat(IMAGE_FILE_FORMAT Format);
+
     static IMAGE_FILE_FORMAT GetFileFormat(const Uint8* pData, size_t Size, const char* FilePath = nullptr);
+
+    static ImageDesc GetDesc(IMAGE_FILE_FORMAT FileFormat, const void* pSrcData, size_t SrcDataSize);
 
     /// Returns true if the image is uniform, i.e. all pixels have the same value
     bool IsUniform() const;
@@ -172,14 +181,18 @@ private:
     friend class MakeNewRCObj;
 
     Image(IReferenceCounters*  pRefCounters,
-          IDataBlob*           pFileData,
+          const void*          pSrcData,
+          size_t               SrcDataSize,
           const ImageLoadInfo& LoadInfo);
 
-    Image(IReferenceCounters* pRefCounters,
-          const ImageDesc&    Desc,
-          IDataBlob*          pPixels);
+    Image(IReferenceCounters*      pRefCounters,
+          const ImageDesc&         Desc,
+          RefCntAutoPtr<IDataBlob> pPixels);
 
-    void LoadTiffFile(IDataBlob* pFileData, const ImageLoadInfo& LoadInfo);
+    static bool Load(IMAGE_FILE_FORMAT FileFormat, const void* pSrcData, size_t SrcDataSize, IDataBlob* pDstPixels, ImageDesc& Desc);
+
+
+    static void LoadTiffFile(const void* pData, size_t Size, IDataBlob* pDstPixels, ImageDesc& Desc);
 
     ImageDesc                m_Desc;
     RefCntAutoPtr<IDataBlob> m_pData;

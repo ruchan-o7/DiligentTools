@@ -32,9 +32,14 @@
 #include "../../../DiligentCore/Graphics/GraphicsEngine/interface/Texture.h"
 #include "Image.h"
 
+#if DILIGENT_CPP_INTERFACE
+#    include "../../../DiligentCore/Common/interface/RefCntAutoPtr.hpp"
+#endif
+
 DILIGENT_BEGIN_NAMESPACE(Diligent)
 
 struct Image;
+struct IMemoryAllocator;
 
 // clang-format off
 
@@ -82,34 +87,34 @@ DILIGENT_TYPED_ENUM(TEXTURE_LOAD_COMPRESS_MODE, Uint8)
 struct TextureLoadInfo
 {
     /// Texture name passed over to the texture creation method
-    const Char* Name                    DEFAULT_VALUE(nullptr);
+    const Char* Name                    DEFAULT_INITIALIZER(nullptr);
 
     /// Usage
-    USAGE Usage                         DEFAULT_VALUE(USAGE_IMMUTABLE);
+    USAGE Usage                         DEFAULT_INITIALIZER(USAGE_IMMUTABLE);
 
     /// Bind flags
-    BIND_FLAGS BindFlags                DEFAULT_VALUE(BIND_SHADER_RESOURCE);
+    BIND_FLAGS BindFlags                DEFAULT_INITIALIZER(BIND_SHADER_RESOURCE);
 
     /// Number of mip levels
-    Uint32 MipLevels                    DEFAULT_VALUE(0);
+    Uint32 MipLevels                    DEFAULT_INITIALIZER(0);
 
     /// CPU access flags
-    CPU_ACCESS_FLAGS CPUAccessFlags     DEFAULT_VALUE(CPU_ACCESS_NONE);
+    CPU_ACCESS_FLAGS CPUAccessFlags     DEFAULT_INITIALIZER(CPU_ACCESS_NONE);
 
     /// Flag indicating if this texture uses sRGB gamma encoding
-    Bool IsSRGB                         DEFAULT_VALUE(False);
+    Bool IsSRGB                         DEFAULT_INITIALIZER(False);
 
     /// Flag indicating that the procedure should generate lower mip levels
-    Bool GenerateMips                   DEFAULT_VALUE(True);
+    Bool GenerateMips                   DEFAULT_INITIALIZER(True);
 
     /// Flag indicating that the image should be flipped vertically
-    Bool FlipVertically                 DEFAULT_VALUE(False);
+    Bool FlipVertically                 DEFAULT_INITIALIZER(False);
 
     /// Flag indicating that RGB channels should be premultiplied by alpha
-    Bool PermultiplyAlpha               DEFAULT_VALUE(False);
+    Bool PermultiplyAlpha               DEFAULT_INITIALIZER(False);
 
     /// Texture format
-    TEXTURE_FORMAT Format               DEFAULT_VALUE(TEX_FORMAT_UNKNOWN);
+    TEXTURE_FORMAT Format               DEFAULT_INITIALIZER(TEX_FORMAT_UNKNOWN);
 
     /// Alpha cut-off value used to remap alpha channel when generating mip
     /// levels as follows:
@@ -118,13 +123,13 @@ struct TextureLoadInfo
     ///
     /// \note This value must be in 0 to 1 range and is only
     ///       allowed for 4-channel 8-bit textures.
-    float          AlphaCutoff          DEFAULT_VALUE(0);
+    float          AlphaCutoff          DEFAULT_INITIALIZER(0);
 
     /// Coarse mip filter type, see Diligent::TEXTURE_LOAD_MIP_FILTER.
-    TEXTURE_LOAD_MIP_FILTER MipFilter   DEFAULT_VALUE(TEXTURE_LOAD_MIP_FILTER_DEFAULT);
+    TEXTURE_LOAD_MIP_FILTER MipFilter   DEFAULT_INITIALIZER(TEXTURE_LOAD_MIP_FILTER_DEFAULT);
 
     /// Texture compression mode, see Diligent::TEXTURE_LOAD_COMPRESS_MODE.
-    TEXTURE_LOAD_COMPRESS_MODE CompressMode DEFAULT_VALUE(TEXTURE_LOAD_COMPRESS_MODE_NONE);
+    TEXTURE_LOAD_COMPRESS_MODE CompressMode DEFAULT_INITIALIZER(TEXTURE_LOAD_COMPRESS_MODE_NONE);
 
     /// Texture component swizzle.
     ///
@@ -142,6 +147,9 @@ struct TextureLoadInfo
     ///             in the image have the same value. If this is the case, the image will
     ///             be clipped to the specified dimension.
     Uint32 UniformImageClipDim DEFAULT_INITIALIZER(0);
+
+    /// An optional memory allocator to allocate memory for the texture.
+    struct IMemoryAllocator* pAllocator DEFAULT_INITIALIZER(nullptr);
 
 #if DILIGENT_CPP_INTERFACE
     explicit TextureLoadInfo(const Char*         _Name,
@@ -223,7 +231,7 @@ DILIGENT_END_INTERFACE
 
 /// \param [in]  pSrcImage   - Pointer to the source image object.
 /// \param [in]  TexLoadInfo - Texture loading information, see Diligent::TextureLoadInfo.
-/// \param [out] ppLoader    - Memory location where pointer to the created texture loader will be written.
+/// \param [out] ppLoader    - Memory location where a pointer to the created texture loader will be written.
 void DILIGENT_GLOBAL_FUNCTION(CreateTextureLoaderFromImage)(struct Image*             pSrcImage,
                                                             const TextureLoadInfo REF TexLoadInfo,
                                                             ITextureLoader**          ppLoader);
@@ -234,7 +242,7 @@ void DILIGENT_GLOBAL_FUNCTION(CreateTextureLoaderFromImage)(struct Image*       
 /// \param [in]  FileFormat - File format. If this parameter is IMAGE_FILE_FORMAT_UNKNOWN,
 ///                           the format will be derived from the file contents.
 /// \param [in]  TexLoadInfo - Texture loading information, see Diligent::TextureLoadInfo.
-/// \param [out] ppLoader   - Memory location where pointer to the created texture loader will be written.
+/// \param [out] ppLoader   - Memory location where a pointer to the created texture loader will be written.
 void DILIGENT_GLOBAL_FUNCTION(CreateTextureLoaderFromFile)(const char*               FilePath,
                                                            IMAGE_FILE_FORMAT         FileFormat,
                                                            const TextureLoadInfo REF TexLoadInfo,
@@ -242,11 +250,11 @@ void DILIGENT_GLOBAL_FUNCTION(CreateTextureLoaderFromFile)(const char*          
 
 /// Creates a texture loader from memory.
 
-/// \param [in]  pData       - Pointer to the data.
+/// \param [in]  pData       - Pointer to the texture data.
 /// \param [in]  Size        - The data size.
 /// \param [in]  MakeCopy    - Whether to make the copy of the data (see remarks).
 /// \param [in]  TexLoadInfo - Texture loading information, see Diligent::TextureLoadInfo.
-/// \param [out] ppLoader    - Memory location where pointer to the created texture loader will be written.
+/// \param [out] ppLoader    - Memory location where a pointer to the created texture loader will be written.
 ///
 /// \remarks    If MakeCopy is false, the pointer to the memory must remain valid until the
 ///             texture loader object is destroyed.
@@ -256,6 +264,40 @@ void DILIGENT_GLOBAL_FUNCTION(CreateTextureLoaderFromMemory)(const void*        
                                                              const TextureLoadInfo REF TexLoadInfo,
                                                              ITextureLoader**          ppLoader);
 
+/// Creates a texture loader from data blob.
+///
+/// \param [in]  pDataBlob   - Pointer to the data blob that contains the texture data.
+/// \param [in]  TexLoadInfo - Texture loading information, see Diligent::TextureLoadInfo.
+/// \param [out] ppLoader    - Memory location where a pointer to the created texture loader will be written.
+///
+/// \remarks    If needed, the loader will keep a strong reference to the data blob.
+void DILIGENT_GLOBAL_FUNCTION(CreateTextureLoaderFromDataBlob)(IDataBlob*                pDataBlob,
+                                                               const TextureLoadInfo REF TexLoadInfo,
+                                                               ITextureLoader**          ppLoader);
+
+#if DILIGENT_CPP_INTERFACE
+void CreateTextureLoaderFromDataBlob(RefCntAutoPtr<IDataBlob> pDataBlob,
+                                     const TextureLoadInfo&   TexLoadInfo,
+                                     ITextureLoader**         ppLoader);
+#endif
+
+
+/// Returns the memory requirement for the texture loader.
+///
+/// \param [in]  pData       - Pointer to the source image data.
+/// \param [in]  Size        - The data size.
+/// \param [in]  TexLoadInfo - Texture loading information, see Diligent::TextureLoadInfo.
+/// \return     The memory requirement in bytes.
+///
+/// \remarks    This function can be used to estimate the memory requirement for the texture loader.
+///             The memory requirement includes the size of the texture data plus the size of the
+///             intermediate data structures used by the loader. It does not include the size of
+///             the source image data.
+///             The actual memory used by the loader may be slightly different.
+size_t DILIGENT_GLOBAL_FUNCTION(GetTextureLoaderMemoryRequirement)(const void*               pData,
+                                                                   size_t                    Size,
+                                                                   const TextureLoadInfo REF TexLoadInfo);
+
 
 /// Writes texture data as DDS file.
 
@@ -264,6 +306,17 @@ void DILIGENT_GLOBAL_FUNCTION(CreateTextureLoaderFromMemory)(const void*        
 /// \param [in]  TexData  - Texture subresource data.
 /// \return     true if the file has been written successfully, and false otherwise.
 bool DILIGENT_GLOBAL_FUNCTION(SaveTextureAsDDS)(const char*           FilePath,
+                                                const TextureDesc REF Desc,
+                                                const TextureData REF TexData);
+
+
+/// Writes texture as DDS to a file stream.
+
+/// \param [in]  pFileStream - File stream.
+/// \param [in]  Desc        - Texture description.
+/// \param [in]  TexData     - Texture subresource data.
+/// \return     true if the texture has been written successfully, and false otherwise.
+bool DILIGENT_GLOBAL_FUNCTION(WriteDDSToStream)(IFileStream*          pFileStream,
                                                 const TextureDesc REF Desc,
                                                 const TextureData REF TexData);
 

@@ -1,5 +1,5 @@
 /*
- *  Copyright 2019-2022 Diligent Graphics LLC
+ *  Copyright 2019-2024 Diligent Graphics LLC
  *  Copyright 2015-2019 Egor Yusov
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,23 +43,11 @@ namespace Diligent
 //--------------------------------------------------------------------------------------
 bool DXSDKMesh::CreateFromFile(const char* szFileName)
 {
-    FileWrapper File;
-    File.Open(FileOpenAttribs{szFileName});
-    if (!File)
-    {
-        LOG_ERROR("Failed to open SDK Mesh file ", szFileName);
+    RefCntAutoPtr<IDataBlob> pFileData;
+    if (!FileWrapper::ReadWholeFile(szFileName, &pFileData))
         return false;
-    }
 
-    auto pFileData = DataBlobImpl::Create();
-    File->Read(pFileData);
-
-    File.Close();
-
-    auto res = CreateFromMemory(reinterpret_cast<Uint8*>(pFileData->GetDataPtr()),
-                                static_cast<Uint32>(pFileData->GetSize()));
-
-    return res;
+    return CreateFromMemory(pFileData->GetConstDataPtr<Uint8>(), static_cast<Uint32>(pFileData->GetSize()));
 }
 
 void DXSDKMesh::ComputeBoundingBoxes()
@@ -103,8 +91,7 @@ void DXSDKMesh::ComputeBoundingBoxes()
     }
 }
 
-bool DXSDKMesh::CreateFromMemory(Uint8* pData,
-                                 Uint32 DataUint8s)
+bool DXSDKMesh::CreateFromMemory(const Uint8* pData, Uint32 DataUint8s)
 {
     m_StaticMeshData.resize(DataUint8s);
     memcpy(m_StaticMeshData.data(), pData, DataUint8s);
@@ -281,7 +268,7 @@ bool DXSDKMesh::Create(const Char* szFileName)
 }
 
 //--------------------------------------------------------------------------------------
-bool DXSDKMesh::Create(Uint8* pData, Uint32 DataUint8s)
+bool DXSDKMesh::Create(const Uint8* pData, Uint32 DataUint8s)
 {
     return CreateFromMemory(pData, DataUint8s);
 }

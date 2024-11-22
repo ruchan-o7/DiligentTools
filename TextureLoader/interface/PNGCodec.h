@@ -1,5 +1,5 @@
 /*
- *  Copyright 2019-2022 Diligent Graphics LLC
+ *  Copyright 2019-2024 Diligent Graphics LLC
  *  Copyright 2015-2019 Egor Yusov
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,13 +71,17 @@ DILIGENT_TYPED_ENUM(ENCODE_PNG_RESULT, Uint32)
 /// Decodes png image.
 
 /// \param [in]  pSrcPngBits - PNG image encoded bits.
+/// \param [in]  PngDataSize - Size of the PNG image data, in bytes.
 /// \param [out] pDstPixels  - Decoded pixels data blob. The pixels are always tightly packed
 ///                            (for instance, components of 3-channel image will be written as |r|g|b|r|g|b|r|g|b|...).
 /// \param [out] pDstImgDesc - Decoded image description.
 /// \return                    Decoding result, see Diligent::DECODE_PNG_RESULT.
-DECODE_PNG_RESULT DILIGENT_GLOBAL_FUNCTION(DecodePng)(IDataBlob* pSrcPngBits,
-                                                      IDataBlob* pDstPixels,
-                                                      ImageDesc* pDstImgDesc);
+///
+/// \remarks    If pDstPixels is null, the function will only decode the image description.
+DECODE_PNG_RESULT DILIGENT_GLOBAL_FUNCTION(DecodePng)(const void* pSrcPngBits,
+                                                      size_t      PngDataSize,
+                                                      IDataBlob*  pDstPixels,
+                                                      ImageDesc*  pDstImgDesc);
 
 /// Encodes an image into PNG format.
 
